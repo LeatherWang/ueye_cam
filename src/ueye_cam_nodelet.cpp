@@ -1585,16 +1585,6 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
 	
 	if(cam_params_.adaptive_exposure_mode_ == 2 && (ros_frame_count_ % 5 == 0) ) {
   //if(cam_params_.adaptive_exposure_mode_ == 2) {
-		if (!cam_params_.crop_image) {
-			cv_bridge::CvImagePtr cv_ptr;
-    		try {
-      			cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::MONO8);
-
-    		} catch (cv_bridge::Exception &e) {
-      			NODELET_ERROR("cv_bridge exception: %s", e.what());
-      			return;
-    		}
-		}
 
     	// Compute the histogram
     	int histSize = 256;
@@ -1604,6 +1594,14 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
     	if(cam_params_.crop_image) {
     		cv::calcHist(frame_cropped_, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, true, false);
     	} else {
+    		cv_bridge::CvImagePtr cv_ptr;
+    		try {
+      			cv_ptr = cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::MONO8);
+
+    		} catch (cv_bridge::Exception &e) {
+      			NODELET_ERROR("cv_bridge exception: %s", e.what());
+      			return;
+    		}
     		cv::calcHist(&cv_ptr->image, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, true, false);
     		//cv::cuda::GpuMat src_gpu(cv_ptr->image), hist_gpu;
     	}
