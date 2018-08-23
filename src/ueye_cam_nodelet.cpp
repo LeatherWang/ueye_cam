@@ -1592,7 +1592,7 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
     	const float *histRange = { range };
     	cv::Mat hist;
     	if(cam_params_.crop_image) {
-    		cv::calcHist(frame_cropped_, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, true, false);
+    		cv::calcHist(&frame_cropped_, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, true, false);
     	} else {
     		cv_bridge::CvImagePtr cv_ptr;
     		try {
