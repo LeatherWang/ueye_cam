@@ -118,7 +118,7 @@ UEyeCamNodelet::UEyeCamNodelet():
   cam_params_.flip_upd = false;
   cam_params_.flip_lr = false;
   cam_params_.do_imu_sync = true;
-  cam_params_.adaptive_exposure_mode_ = 2;
+  cam_params_.adaptive_exposure_mode_ = 2; //2: 主机，1: 从机
   cam_params_.crop_image = false;
   sync_buffer_size_ = 100;
   adaptive_exposure_ms_ = 0.001;
@@ -178,13 +178,19 @@ void UEyeCamNodelet::onInit() {
   if (cam_params_.crop_image) {
     ros_cropped_pub_ = it.advertise(cam_name_ + "/image_cropped", 3);
   }
-	
+
+  // 告诉从机曝光时间
   ros_exposure_pub_ = nh.advertise<ueye_cam::Exposure>("master_exposure", 1);
 
+  // 订阅IMU发过来的外部触发时间戳，用于同步
   ros_timestamp_sub_ = nh.subscribe("ddd_mav/cam_imu_sync/cam_imu_stamp", 1,
 					  &UEyeCamNodelet::bufferTimestamp, this);
+  // 订阅主机发过来的曝光时间
   ros_exposure_sub_ = nh.subscribe("master_exposure", 1,
 					  &UEyeCamNodelet::setSlaveExposure, this);
+
+  // 告诉飞控，我相机准备好了?? 可以开始给我发送触发信号了
+  //! @attention 参考: ueye_trigger_ready.cpp
   trigger_ready_srv_ = nh.serviceClient<std_srvs::Trigger>(cam_name_ + "/trigger_ready");
 
 	// Initiate camera and start capture
@@ -909,6 +915,7 @@ INT UEyeCamNodelet::queryCamParams() {
 INT UEyeCamNodelet::connectCam() {
   INT is_err = IS_SUCCESS;
 
+  // 打开相机，打开驱动并建立与相机的连接。该函数在初始化成功后分配相机句柄
   if ((is_err = UEyeCamDriver::connectCam()) != IS_SUCCESS) return is_err;
 
   // (Attempt to) load UEye camera parameter configuration file
@@ -974,6 +981,7 @@ void UEyeCamNodelet::frameGrabLoop() {
       	prev_output_frame_idx_ = 0;
       	output_rate_mutex_.unlock();
 
+        //! @attention @attention 强制使能外部触发
 	cam_params_.ext_trigger_mode = 1; // force set ext_trigger_mode
         if (setExtTriggerMode() != IS_SUCCESS) {
         	NODELET_ERROR_STREAM("Shutting down UEye camera interface...");
@@ -982,7 +990,8 @@ void UEyeCamNodelet::frameGrabLoop() {
         }
 	
         NODELET_INFO_STREAM("Camera " << cam_name_ << " set to external trigger mode");
-      	
+
+        //! @attention 告诉无人机可以向我发送触发信号了，并将在此之前由于相机缓冲区的图像刷掉
 	sendTriggerReady();
   }
   
@@ -1007,6 +1016,9 @@ void UEyeCamNodelet::frameGrabLoop() {
     // Initialize live video mode if camera was previously asleep, and ROS image topic has subscribers;
     // and stop live video mode if ROS image topic no longer has any subscribers
     if (!cam_params_.do_imu_sync) {
+        //!@attention 睡眠和曝光的切换，只在不进行IMU与相机同步时有效
+        // 如果之前是睡眠模式，发现了新的订阅者，重新初始化live模式
+        // 如果之前是live模式，现在没有订阅者了，则进入睡眠模式
     	currNumSubscribers = ros_cam_pub_.getNumSubscribers();
       if (cam_params_.crop_image) currNumSubscribers_cropped = ros_cropped_pub_.getNumSubscribers();
       
@@ -1057,6 +1069,7 @@ void UEyeCamNodelet::frameGrabLoop() {
     }
 
     // Send updated dyncfg parameters if previously changed
+    // 就是说有些参数可能更改不成功，这样就需要重新刷新一下进行现实喽
     if (cfg_sync_requested_) {
       if (ros_cfg_mutex_.try_lock()) { // Make sure that dynamic reconfigure server or config callback is not active
         ros_cfg_mutex_.unlock();
@@ -1078,9 +1091,14 @@ void UEyeCamNodelet::frameGrabLoop() {
 
 //_____________________________
 // start capturing 
-    if (isCapturing()) {
+    //如果在触发模式下调用is_CaptureVideo()函数，相机将进入连续触发待机状态。每收到一个电子触发信号，相机就会捕捉一张图像，并立即准备就绪等待再次触发
+    if (isCapturing())
+    {
       INT eventTimeout = (cam_params_.auto_frame_rate || cam_params_.ext_trigger_mode) ?
           (INT) 2000 : (INT) (1000.0 / cam_params_.frame_rate * 1.9); // tide strick timeout to avoid skipping frame. 
+
+      //! @attention 阻塞等待
+      // `processNextFrame`函数用于按照eventTimeout等待下一帧图像<到来事件>，如果超时，则抛出错误提示
       if (processNextFrame(eventTimeout) != NULL) {
 
         // Initialize shared pointers from member messages for nodelet intraprocess publishing
@@ -1089,14 +1107,19 @@ void UEyeCamNodelet::frameGrabLoop() {
         
         // Initialize/compute frame timestamp based on clock tick value from camera
         if (init_ros_time_.isZero()) {
+
+            //! @attention 获取相机内部的时间戳
           if(getClockTick(&init_clock_tick_)) {
             init_ros_time_ = getImageTimestamp();
 
             // Deal with instability in getImageTimestamp due to daylight savings time
+            //! @todo
             if (abs((ros::Time::now() - init_ros_time_).toSec()) > abs((ros::Time::now() - (init_ros_time_+ros::Duration(3600,0))).toSec())) { init_ros_time_ += ros::Duration(3600,0); }
             if (abs((ros::Time::now() - init_ros_time_).toSec()) > abs((ros::Time::now() - (init_ros_time_-ros::Duration(3600,0))).toSec())) { init_ros_time_ -= ros::Duration(3600,0); }
           }
         }
+
+        //! @attention @attention 非常重要!! 设置时间戳，注意，这是图像刚刚到来的时候的时间，而不是读取完的时间，后面将进行读取
         img_msg_ptr->header.stamp = cam_info_msg_ptr->header.stamp = getImageTickTimestamp();
 
         // Process new frame
@@ -1125,6 +1148,7 @@ void UEyeCamNodelet::frameGrabLoop() {
         // Throttle publish rate
         bool throttle_curr_frame = false;
         output_rate_mutex_.lock();
+        //没有使用，跟设置发布时间间隔有关系
         if (!cam_params_.ext_trigger_mode && cam_params_.output_rate > 0) {
           if (init_publish_time_.is_zero()) { // Set reference time 
             init_publish_time_ = img_msg_ptr->header.stamp;
@@ -1200,6 +1224,7 @@ void UEyeCamNodelet::frameGrabLoop() {
 			unsigned int i;
 			//INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
 			for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
+                //! @attention 使用触发时间和曝光时间的一半作为图像的时间戳
 				i += stampAndPublishImage(i);
 			}
 		}
@@ -1385,6 +1410,7 @@ void UEyeCamNodelet::handleTimeout() {
 // For IMU sync
 void UEyeCamNodelet::setSlaveExposure(const ueye_cam::Exposure &msg)
 {
+    //! @attention for双目，主从，这里是设置从机的曝光时间跟主机一样，双目嘛，必须保证曝光时间相同
 	if(cam_params_.adaptive_exposure_mode_ == 1) { // accept exposure timing from master camera
 		// TODO : re-add check for sequence again
 		adaptive_exposure_ms_ = msg.exposure_ms;
@@ -1396,6 +1422,7 @@ void UEyeCamNodelet::setSlaveExposure(const ueye_cam::Exposure &msg)
 
 };
 
+// 无人机发过来外部触发开始时间，外部触发使用的硬件上的
 void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
 {
 	if(cam_params_.do_imu_sync) {
@@ -1412,22 +1439,29 @@ void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
 	}
 };
 
+//! @attention @attention 能够实现同步的关键函数，IMU和相机的计数进行同步，只有二者计数值相等时才表示二者的时间是同步的!!
 void UEyeCamNodelet::sendTriggerReady()
 {
-	
+    //! @todo 飞控的Node一启动，就开始发触发信号!??
 	acknTriggerCommander(); // call service: First ackn will STOP px4 triggering
 
 	// set stamp_buffer_offset_ from px4
 	ros::Duration(1).sleep(); // wait for timestamp callback from mavros
-	if (timestamp_buffer_.empty())	stamp_buffer_offset_ = 0;
-	else 				stamp_buffer_offset_ = 1 + (uint)(timestamp_buffer_.end()-1)->frame_seq_id;
+
+    // 因为捕获图像的线程和无人机的线程是不同线程，所以在本线程运行到这里之前，可能`frame_seq_id`不是0
+    if (timestamp_buffer_.empty())
+        stamp_buffer_offset_ = 0;
+    else
+        stamp_buffer_offset_ = 1 + (uint)(timestamp_buffer_.end()-1)->frame_seq_id;
 	stamp_buffer_offset_double_ = (double)stamp_buffer_offset_;
 
 	INFO_STREAM("Detected px4 starting stamp sequence will be: " << stamp_buffer_offset_);
 
 	timestamp_buffer_.clear(); // timestamp_buffer_ should have some elements already from px4 since it is in a different thread.
-	ros_frame_count_ = 0;
+    ros_frame_count_ = 0;  //清空图像计数器
 	int i=0; 
+
+    //! @attention @attention 将缓冲区内的所有未被使用的图像刷掉，因为还没开始触发呢，怎么可能有图像呢
 	while (processNextFrame(2000) != NULL) {i++;} // this should flush all the unused frame in the camera buffer
 	INFO_STREAM("Flashed " << i << " images from camera buffer prior to start!");
 	
@@ -1437,11 +1471,13 @@ void UEyeCamNodelet::sendTriggerReady()
 void UEyeCamNodelet::acknTriggerCommander()
 {
 	std_srvs::Trigger sig;
+    //! @attention 注意这里如果失败了，很可能导致不同步
 	if (!trigger_ready_srv_.call(sig)) {
 		ROS_ERROR("Failed to call ready-for-trigger");
 	}
 };
 
+// 双目的化，只需要计算一个最优曝光时间即可，然后将计算结果发给从机即可
 void UEyeCamNodelet::sendSlaveExposure()
 {
 	if(cam_params_.adaptive_exposure_mode_ == 2)
@@ -1459,6 +1495,7 @@ void UEyeCamNodelet::sendSlaveExposure()
 
 unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 {
+    // 检查具有index索引的图像在`timestamp_buffer_`里是否有与之对应的元素
 	int timestamp_index = findInStampBuffer(index);
 	if (timestamp_index+1) {
 
@@ -1470,6 +1507,7 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 		cinfo = cinfo_buffer_.at(index);
 
 		// copy trigger time// + half of the exposure time
+        //! @attention @attention 触发时间+曝光时间的一半
 		image.header.stamp = timestamp_buffer_.at(timestamp_index).frame_stamp + ros::Duration(adaptive_exposure_ms_/2000.0);
 		cinfo.header = image.header;
 		
@@ -1478,6 +1516,7 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 		ros_cam_pub_.publish(image, cinfo);
 
     // compute optimal params for next image frame (in any case)
+        //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
     optimizeCaptureParams(image);
 		
 		// Publish Cropped images
@@ -1502,6 +1541,7 @@ int UEyeCamNodelet::findInStampBuffer(unsigned int index)
 		return -1;
 
 	// Check whether image in image buffer with index "index" has corresponding element in timestamp buffer
+    //! @attention @attention 检查具有index索引的图像在`timestamp_buffer_`里是否有与之对应的元素
 	unsigned int k = 0;
 	
 	// sequence based method
@@ -1513,7 +1553,6 @@ int UEyeCamNodelet::findInStampBuffer(unsigned int index)
 		} else {
 			k += 1;
 		}
-
 	}
 
 	return -1;
@@ -1582,8 +1621,8 @@ void UEyeCamNodelet::publishCroppedImage(const sensor_msgs::Image& frame)
 
 void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
 {
-	
-	if(cam_params_.adaptive_exposure_mode_ == 2 && (ros_frame_count_ % 5 == 0) ) {
+    // 如果是主机，则计算自适应曝光时间
+    if(cam_params_.adaptive_exposure_mode_ == 2 && (ros_frame_count_ % 5 == 0) ) { //每5帧进行一次
   //if(cam_params_.adaptive_exposure_mode_ == 2) {
 
     	// Compute the histogram
@@ -1624,6 +1663,7 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
 		double msv = j / k;
 
 		// TODO parameterize this 
+        //! @attention 设置参数
 		double setpoint = 3.0;//2.4;
 		double deadband = 1.0;
 		double adaptive_exposure_max_ = 8.0; //ms, to make sure not skipping frames, since there is readout time for image from ueye cam manual.

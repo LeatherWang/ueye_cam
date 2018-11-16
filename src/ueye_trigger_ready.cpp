@@ -113,6 +113,7 @@ int main(int argc, char **argv)
 	ros::Rate r(100); // Hz
 
 	// Send start trigger command to Pixhawk to echo the current timestamp
+    // 使能飞控向相机发送触发信号，以获得时间戳
 	while (tr.enableTrigger() && ros::ok()) {
 		ROS_INFO("TriggerReady: Retrying reaching pixhawk");
 		r2.sleep();
@@ -120,6 +121,7 @@ int main(int argc, char **argv)
 	ROS_INFO_STREAM("Started px4 triggering");
 	
 	// wait for camera acknowledge
+    // 等待相机准备好了触发
 	//while (!(tr.cam0_OK() && tr.cam1_OK()) && ros::ok()) {
 	while (!tr.cam0_OK() && ros::ok()) {
 		ros::spinOnce();
