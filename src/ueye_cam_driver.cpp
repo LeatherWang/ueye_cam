@@ -837,6 +837,58 @@ INT UEyeCamDriver::setExtTriggerMode() {
   return is_err;
 };
 
+// leather add
+INT UEyeCamDriver::setExtTriggerModeSoftware() {
+  if (!isConnected()) return IS_INVALID_CAMERA_HANDLE;
+
+  INT is_err = IS_SUCCESS;
+
+  if (!extTriggerModeActive()) {
+    setStandbyMode(); // No need to check for success
+
+    if ((is_err = is_EnableEvent(cam_handle_, IS_SET_EVENT_FRAME)) != IS_SUCCESS) {
+      ERROR_STREAM("Could not enable frame event for UEye camera '" <<
+          cam_name_ << "' (" << err2str(is_err) << ")");
+      return is_err;
+    }
+
+    if ((is_err = is_SetExternalTrigger(cam_handle_, IS_SET_TRIGGER_SOFTWARE)) != IS_SUCCESS) {
+      ERROR_STREAM("Could not enable falling-edge external trigger mode on UEye camera '" <<
+          cam_name_ << "' (" << err2str(is_err) << ")");
+      return is_err;
+    }
+//    if ((is_err = is_CaptureVideo(cam_handle_, IS_DONT_WAIT)) != IS_SUCCESS) {
+//      ERROR_STREAM("Could not start external trigger live video mode on UEye camera '" <<
+//          cam_name_ << "' (" << err2str(is_err) << ")");
+//      return is_err;
+//    }
+    DEBUG_STREAM("Started falling-edge external trigger live video mode on UEye camera '" + cam_name_ + "'");
+  }
+
+  return is_err;
+};
+
+INT UEyeCamDriver::getOneExtriggerFrame() {
+    if((cam_handle_ == (HIDS) 0))
+        return IS_INVALID_CAMERA_HANDLE;
+
+    INT is_err;
+
+//    if((is_err = is_ForceTrigger(cam_handle_)) != IS_SUCCESS)
+//    {
+//        ERROR_STREAM("Could not enable falling-edge external trigger mode on UEye camera '" <<
+//                     cam_name_ << "' (" << err2str(is_err) << ")");
+//        return is_err;
+//    }
+    if((is_err = is_FreezeVideo(cam_handle_, IS_WAIT)) != IS_SUCCESS)
+    {
+        ERROR_STREAM("Could not enable falling-edge external trigger mode on UEye camera '" <<
+                     cam_name_ << "' (" << err2str(is_err) << ")");
+        return is_err;
+    }
+    return is_err;
+};
+
 INT UEyeCamDriver::setMirrorUpsideDown(bool flip_horizontal){
   if (!isConnected()) return IS_INVALID_CAMERA_HANDLE;
 
@@ -915,10 +967,16 @@ INT UEyeCamDriver::setStandbyMode() {
 
 
 const char* UEyeCamDriver::processNextFrame(INT timeout_ms) {
-  if (!freeRunModeActive() && !extTriggerModeActive()) {
-	ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
-	return NULL;
-  }
+
+//  if (!freeRunModeActive() && !extTriggerModeActive()) {
+//    ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
+//    return NULL;
+//  }
+    //! @attention leather edit
+    if (!freeRunModeActive() && !extTriggerSoftWareModeActive()) {
+      ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
+      return NULL;
+    }
 
   INT is_err = IS_SUCCESS;
 

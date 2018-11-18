@@ -109,6 +109,13 @@ add_library(${UEYECAM_NODELET_NAME} ${UEYECAM_NODELET_SOURCES} ${UEYECAM_NODELET
 target_link_libraries(${UEYECAM_NODELET_NAME} ${catkin_LIBRARIES} ${UEYECAM_LIB_NAME})
 add_dependencies(${UEYECAM_NODELET_NAME} ${PROJECT_NAME}_gencfg)
 
+add_executable(ueye_odom_trigger_ready
+  src/ueye_odom_trigger_ready.cpp
+)
+target_link_libraries(ueye_odom_trigger_ready
+  ${catkin_LIBRARIES}
+)
+
 #add_executable(trigger_commander
 #  src/ueye_trigger_ready.cpp
 #)

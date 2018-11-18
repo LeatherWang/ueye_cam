@@ -75,6 +75,8 @@
 //#include <opencv2/cudaarithm.hpp>
 //#include <opencv2/gpu/gpu.hpp>
 
+#include <slam_car/CamOdomStamp.h>
+
 namespace ueye_cam {
 
 
@@ -159,6 +161,7 @@ protected:
   void setSlaveExposure(const ueye_cam::Exposure& msg);
   
   void bufferTimestamp(const mavros_msgs::CamIMUStamp& msg);
+  void bufferTimestampOdometry(const slam_car::CamOdomStamp& msg);
 
   void sendTriggerReady();
 
@@ -237,6 +240,7 @@ protected:
   ros::Publisher ros_exposure_pub_;
   
   ros::Subscriber ros_timestamp_sub_;
+  ros::Subscriber ros_timestamp_sub_odom_;
   ros::Subscriber ros_exposure_sub_;
   
   sensor_msgs::Image ros_image_;
@@ -255,7 +259,8 @@ protected:
   int sync_buffer_size_;
   std::vector<sensor_msgs::Image> image_buffer_;
   std::vector<sensor_msgs::CameraInfo> cinfo_buffer_;
-  std::vector<mavros_msgs::CamIMUStamp> timestamp_buffer_;
+  //std::vector<mavros_msgs::CamIMUStamp> timestamp_buffer_;
+  std::vector<slam_car::CamOdomStamp> timestamp_buffer_;
   boost::mutex buffer_mutex_;
   
   ros::ServiceServer set_cam_info_srv_;
@@ -283,6 +288,10 @@ protected:
   uint64_t prev_output_frame_idx_; // see init_publish_time_
   boost::mutex output_rate_mutex_;
   cv::Mat frame_cropped_;
+
+  // leather add
+  bool extraggerCameraReady;
+  bool triggerCommand;
 };
 
 

@@ -1,8 +1,8 @@
 #include "ros/ros.h"
-#include "mavros_msgs/CommandTriggerControl.h"
 #include <cstdlib>
 #include <string>
 #include <std_srvs/Trigger.h>
+#include <slam_car/OdomTriggerControl.h>
 
 class TriggerReady
 {
@@ -13,7 +13,7 @@ public:
 		cam0_OK_ = false;
 		cam1_OK_ = false;
 		framerate_hz_ = 18.0; // default framerate TODO get this from the ueye node
-		triggerClient_ = n_.serviceClient<mavros_msgs::CommandTriggerControl>("/ddd_mav/cmd/trigger_control");
+        triggerClient_ = n_.serviceClient<slam_car::OdomTriggerControl>("/slam_car/trigger_control");
 		advertiseService();
 	}
 
@@ -50,7 +50,7 @@ public:
 
 	int enableTrigger()
 	{
-		srv_.request.cycle_time = (1000.0 / framerate_hz_);
+        //srv_.request.cycle_time = (1000.0 / framerate_hz_);
 		srv_.request.trigger_enable = true;
 
 		if (triggerClient_.call(srv_)) {
@@ -66,7 +66,7 @@ public:
 	
 	int disableTrigger()
 	{
-		srv_.request.cycle_time = 0;
+        //srv_.request.cycle_time = 0;
 		srv_.request.trigger_enable = false;
 
 		if (triggerClient_.call(srv_)) {
@@ -82,8 +82,8 @@ public:
 
 	void advertiseService()
 	{
-		serverCam0_ = n_.advertiseService("cam0/trigger_ready", &TriggerReady::servCam0, this);
-		serverCam1_ = n_.advertiseService("cam1/trigger_ready", &TriggerReady::servCam1, this);
+        serverCam0_ = n_.advertiseService("/cam0/trigger_ready", &TriggerReady::servCam0, this);
+        serverCam1_ = n_.advertiseService("/cam1/trigger_ready", &TriggerReady::servCam1, this);
 	}
 
 
@@ -96,7 +96,7 @@ private:
 	ros::NodeHandle n_;
 
 	ros::ServiceClient triggerClient_;
-	mavros_msgs::CommandTriggerControl srv_;
+    slam_car::OdomTriggerControl srv_;
 
 	ros::ServiceServer serverCam0_;
 	ros::ServiceServer serverCam1_;
@@ -126,7 +126,7 @@ int main(int argc, char **argv)
 	while (!tr.cam0_OK() && ros::ok()) {
 		ros::spinOnce();
 		r.sleep();
-	} 
+    }
 	tr.reset_cam();
 
 	// Send stop trigger command to Pixhawk to allow measuring the offset

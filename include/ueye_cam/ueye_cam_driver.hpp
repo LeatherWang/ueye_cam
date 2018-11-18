@@ -312,6 +312,8 @@ public:
    */
   INT setExtTriggerMode();
 
+  INT setExtTriggerModeSoftware();
+
   /**
    * Disables either free-run or external trigger mode, and sets the current
    * camera to standby mode.
@@ -369,6 +371,14 @@ public:
     return ((cam_handle_ != (HIDS) 0) &&
         (is_CaptureVideo(cam_handle_, IS_GET_LIVE) == TRUE));
   };
+
+  // leather add
+  inline bool extTriggerSoftWareModeActive() {
+    return ((cam_handle_ != (HIDS) 0) &&
+        (is_SetExternalTrigger(cam_handle_, IS_GET_EXTERNALTRIGGER) == IS_SET_TRIGGER_SOFTWARE)); //(is_CaptureVideo(cam_handle_, IS_GET_LIVE) == TRUE)
+  };
+
+  INT getOneExtriggerFrame();
 
   /**
    * Stringifies UEye API error flag.

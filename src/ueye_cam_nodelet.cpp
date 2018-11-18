@@ -73,6 +73,7 @@ constexpr int UEyeCamDriver::ANY_CAMERA; // Needed since CMakeLists.txt creates 
 
 
 // Note that these default settings will be overwritten by queryCamParams() during connectCam()
+//! @attention 下面的参数都会被覆盖，所以看看就行，别当真
 UEyeCamNodelet::UEyeCamNodelet():
     nodelet::Nodelet(),
     UEyeCamDriver(ANY_CAMERA, DEFAULT_CAMERA_NAME),
@@ -87,7 +88,8 @@ UEyeCamNodelet::UEyeCamNodelet():
     cam_params_filename_(""),
     init_clock_tick_(0),
     init_publish_time_(0),
-    prev_output_frame_idx_(0) {
+    prev_output_frame_idx_(0)
+{
   ros_image_.is_bigendian = (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__); // TODO: what about MS Windows?
   cam_params_.image_width = DEFAULT_IMAGE_WIDTH;
   cam_params_.image_height = DEFAULT_IMAGE_HEIGHT;
@@ -117,11 +119,13 @@ UEyeCamNodelet::UEyeCamNodelet():
   cam_params_.flash_duration = DEFAULT_FLASH_DURATION;
   cam_params_.flip_upd = false;
   cam_params_.flip_lr = false;
-  cam_params_.do_imu_sync = true;
+  cam_params_.do_imu_sync = true; /// 不要改这里，没有用，该.cfg文件或者在on_init()函数最后调用configCallback之后再进行设置
   cam_params_.adaptive_exposure_mode_ = 2; //2: 主机，1: 从机
   cam_params_.crop_image = false;
   sync_buffer_size_ = 100;
-  adaptive_exposure_ms_ = 0.001;
+  adaptive_exposure_ms_ = 10;
+  extraggerCameraReady = false;
+  triggerCommand = false;
 };
 
 
@@ -185,6 +189,10 @@ void UEyeCamNodelet::onInit() {
   // 订阅IMU发过来的外部触发时间戳，用于同步
   ros_timestamp_sub_ = nh.subscribe("ddd_mav/cam_imu_sync/cam_imu_stamp", 1,
 					  &UEyeCamNodelet::bufferTimestamp, this);
+
+  ros_timestamp_sub_odom_ = nh.subscribe("/slam_car/cam_odom_sync_stamp", 1,
+                      &UEyeCamNodelet::bufferTimestampOdometry, this);
+
   // 订阅主机发过来的曝光时间
   ros_exposure_sub_ = nh.subscribe("master_exposure", 1,
 					  &UEyeCamNodelet::setSlaveExposure, this);
@@ -205,6 +213,7 @@ void UEyeCamNodelet::onInit() {
 	}
 	NODELET_INFO_STREAM("Camera " << cam_name_ << " Initialised at standby mode");
 
+    //!@attention 注意这里会调用一次回调函数，会函数内部`cam_params_ = config`会将没有在参数服务器中(由launch文件设置)设置的参数恢复为dynamic_configure中的默认值
   ros_cfg_->setCallback(f); // this will call configCallback, which will configure the camera's parameters
 
   // Start IMU-camera trigger
@@ -562,8 +571,10 @@ INT UEyeCamNodelet::parseROSParams(ros::NodeHandle& local_nh) {
 };
 
 
-void UEyeCamNodelet::configCallback(ueye_cam::UEyeCamConfig& config, uint32_t level) {
-  if (!isConnected()) return;
+void UEyeCamNodelet::configCallback(ueye_cam::UEyeCamConfig& config, uint32_t level)
+{
+  if (!isConnected())
+      return;
 
   // See if frame grabber needs to be restarted
   bool restartFrameGrabber = false;
@@ -736,7 +747,7 @@ void UEyeCamNodelet::configCallback(ueye_cam::UEyeCamConfig& config, uint32_t le
     config.flash_delay = flash_delay;
     config.flash_duration = flash_duration;
   }
-  
+
   // Update local copy of parameter set to newly updated set
   cam_params_ = config;
 
@@ -925,9 +936,11 @@ INT UEyeCamNodelet::connectCam() {
   loadCamConfig(cam_params_filename_);
 
   // Query existing configuration parameters from camera
+  //!@attention 查询相机内部已经存在的参数，用于更新cam_params_
   if ((is_err = queryCamParams()) != IS_SUCCESS) return is_err;
 
   // Parse and load ROS camera settings
+  // 注意上一步更改了cam_params_，所以这里只需要修改不一样的参数即可
   if ((is_err = parseROSParams(getPrivateNodeHandle())) != IS_SUCCESS) return is_err;
 
   return IS_SUCCESS;
@@ -983,7 +996,8 @@ void UEyeCamNodelet::frameGrabLoop() {
 
         //! @attention @attention 强制使能外部触发
 	cam_params_.ext_trigger_mode = 1; // force set ext_trigger_mode
-        if (setExtTriggerMode() != IS_SUCCESS) {
+        //! @attention 设置软件外部触发 setExtTriggerModeSoftware()
+        if (setExtTriggerModeSoftware() != IS_SUCCESS) {
         	NODELET_ERROR_STREAM("Shutting down UEye camera interface...");
         	ros::shutdown();
         	return;
@@ -993,6 +1007,7 @@ void UEyeCamNodelet::frameGrabLoop() {
 
         //! @attention 告诉无人机可以向我发送触发信号了，并将在此之前由于相机缓冲区的图像刷掉
 	sendTriggerReady();
+    extraggerCameraReady = true;
   }
   
   // set camera model for rectification
@@ -1069,11 +1084,11 @@ void UEyeCamNodelet::frameGrabLoop() {
     }
 
     // Send updated dyncfg parameters if previously changed
-    // 就是说有些参数可能更改不成功，这样就需要重新刷新一下进行现实喽
+    // 就是说有些参数可能更改不成功，这样就需要重新刷新一下进行显示喽
     if (cfg_sync_requested_) {
       if (ros_cfg_mutex_.try_lock()) { // Make sure that dynamic reconfigure server or config callback is not active
         ros_cfg_mutex_.unlock();
-        ros_cfg_->updateConfig(cam_params_);
+        ros_cfg_->updateConfig(cam_params_); //! @attention 使用cam_params_更新动态配置参数
         cfg_sync_requested_ = false;
       }
     }
@@ -1092,14 +1107,22 @@ void UEyeCamNodelet::frameGrabLoop() {
 //_____________________________
 // start capturing 
     //如果在触发模式下调用is_CaptureVideo()函数，相机将进入连续触发待机状态。每收到一个电子触发信号，相机就会捕捉一张图像，并立即准备就绪等待再次触发
-    if (isCapturing())
+    //! @todo 替换成 isCapturing()
+//    if(cam_params_.do_imu_sync && !triggerCommand)
+//        continue;
+    if (isConnected())//isCapturing()
     {
+        triggerCommand = false;
       INT eventTimeout = (cam_params_.auto_frame_rate || cam_params_.ext_trigger_mode) ?
           (INT) 2000 : (INT) (1000.0 / cam_params_.frame_rate * 1.9); // tide strick timeout to avoid skipping frame. 
-
+//cout<<3<<endl;
+//ros::Time startTime = ros::Time::now();
       //! @attention 阻塞等待
       // `processNextFrame`函数用于按照eventTimeout等待下一帧图像<到来事件>，如果超时，则抛出错误提示
-      if (processNextFrame(eventTimeout) != NULL) {
+      if (processNextFrame(eventTimeout) != NULL)
+      {
+
+//cout<<4<<(ros::Time::now()-startTime).toSec()<<endl;
 
         // Initialize shared pointers from member messages for nodelet intraprocess publishing
         sensor_msgs::ImagePtr img_msg_ptr(new sensor_msgs::Image(ros_image_));
@@ -1107,7 +1130,6 @@ void UEyeCamNodelet::frameGrabLoop() {
         
         // Initialize/compute frame timestamp based on clock tick value from camera
         if (init_ros_time_.isZero()) {
-
             //! @attention 获取相机内部的时间戳
           if(getClockTick(&init_clock_tick_)) {
             init_ros_time_ = getImageTimestamp();
@@ -1148,6 +1170,7 @@ void UEyeCamNodelet::frameGrabLoop() {
         // Throttle publish rate
         bool throttle_curr_frame = false;
         output_rate_mutex_.lock();
+
         //没有使用，跟设置发布时间间隔有关系
         if (!cam_params_.ext_trigger_mode && cam_params_.output_rate > 0) {
           if (init_publish_time_.is_zero()) { // Set reference time 
@@ -1167,97 +1190,115 @@ void UEyeCamNodelet::frameGrabLoop() {
 
         cam_info_msg_ptr->width = cam_params_.image_width / cam_sensor_scaling_rate_ / cam_binning_rate_;
         cam_info_msg_ptr->height = cam_params_.image_height / cam_sensor_scaling_rate_ / cam_binning_rate_;
-	
-	//_________________
+
+        //_________________
         // Copy pixel content from internal frame buffer to ROS image
-	// For IMU sync
-	if (cam_params_.do_imu_sync) {
-		// TODO: 9 make ros_image_.data (std::vector) use cam_buffer_ (char*) as underlying buffer, without copy; alternatively after override reallocateCamBuffer() by allocating memory to ros_image_.data, and setting that as internal camera buffer with is_SetAllocatedImageMem (complication is that vector's buffer need to be mlock()-ed)
-		int expected_row_stride = cam_info_msg_ptr->width * bits_per_pixel_ / 8;
+        // For IMU sync
 
-		if (cam_buffer_pitch_ < expected_row_stride) {
-			ERROR_STREAM("Camera buffer pitch (" << cam_buffer_pitch_ <<
-					") is smaller than expected for [" << cam_name_ << "]: " <<
-					"width (" << cam_info_msg_ptr->width << ") * bytes per pixel (" <<
-					bits_per_pixel_ / 8 << ") = " << expected_row_stride);
-			continue;
+        if (cam_params_.do_imu_sync)
+        {
+            // TODO: 9 make ros_image_.data (std::vector) use cam_buffer_ (char*) as underlying buffer,
+            // without copy; alternatively after override reallocateCamBuffer() by allocating memory to ros_image_.data,
+            // and setting that as internal camera buffer with is_SetAllocatedImageMem (complication is that vector's buffer need to be mlock()-ed)
+            int expected_row_stride = cam_info_msg_ptr->width * bits_per_pixel_ / 8;
 
-		} else if (cam_buffer_pitch_ == expected_row_stride) {
-			// Content is contiguous, so copy out the entire buffer
-			output_rate_mutex_.lock();
-			copy((char *) cam_buffer_,
-			((char *) cam_buffer_) + cam_buffer_size_,
-			img_msg_ptr->data.begin());
-			output_rate_mutex_.unlock();
+            if (cam_buffer_pitch_ < expected_row_stride)
+            {
+                ERROR_STREAM("Camera buffer pitch (" << cam_buffer_pitch_ <<
+                             ") is smaller than expected for [" << cam_name_ << "]: " <<
+                             "width (" << cam_info_msg_ptr->width << ") * bytes per pixel (" <<
+                             bits_per_pixel_ / 8 << ") = " << expected_row_stride);
+                continue;
 
-		} else { // cam_buffer_pitch_ > expected_row_stride
-			// Each row contains extra content according to cam_buffer_pitch_, so must copy out each row independently
-			output_rate_mutex_.lock();			
-			std::vector<unsigned char>::iterator ros_image_it = img_msg_ptr->data.begin();
-			char *cam_buffer_ptr = cam_buffer_;
+            }
+            else if (cam_buffer_pitch_ == expected_row_stride)
+            {
+                // Content is contiguous, so copy out the entire buffer
+                output_rate_mutex_.lock();
+                copy((char *) cam_buffer_,
+                     ((char *) cam_buffer_) + cam_buffer_size_,
+                     img_msg_ptr->data.begin());
+                output_rate_mutex_.unlock();
 
-			for (unsigned int row = 0; row < cam_info_msg_ptr->height; row++) {
-				ros_image_it = copy(cam_buffer_ptr, cam_buffer_ptr + expected_row_stride, ros_image_it);
-				cam_buffer_ptr += expected_row_stride;
-			}
+            }
+            else
+            { // cam_buffer_pitch_ > expected_row_stride
+                // Each row contains extra content according to cam_buffer_pitch_, so must copy out each row independently
+                output_rate_mutex_.lock();
+                std::vector<unsigned char>::iterator ros_image_it = img_msg_ptr->data.begin();
+                char *cam_buffer_ptr = cam_buffer_;
 
-			img_msg_ptr->step = expected_row_stride; // fix the row stepsize/stride value
-			output_rate_mutex_.unlock();
-		}
+                for (unsigned int row = 0; row < cam_info_msg_ptr->height; row++) {
+                    ros_image_it = copy(cam_buffer_ptr, cam_buffer_ptr + expected_row_stride, ros_image_it);
+                    cam_buffer_ptr += expected_row_stride;
+                }
 
-		img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_; ros_frame_count_++;
-		img_msg_ptr->header.frame_id = cam_info_msg_ptr->header.frame_id;
+                img_msg_ptr->step = expected_row_stride; // fix the row stepsize/stride value
+                output_rate_mutex_.unlock();
+            }
 
-		if (!frame_grab_alive_ || !ros::ok()) { break; }
+            img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_; ros_frame_count_++;
+            img_msg_ptr->header.frame_id = cam_info_msg_ptr->header.frame_id;
+
+            if (!frame_grab_alive_ || !ros::ok()) { break; }
 
 
-		// buffer the image frame and camera info
-		output_rate_mutex_.lock();
-		image_buffer_.push_back(*img_msg_ptr);
-		cinfo_buffer_.push_back(*cam_info_msg_ptr);
-		output_rate_mutex_.unlock();
-		
-		buffer_mutex_.lock();
-		//adaptiveSync();		
-		if (image_buffer_.size() && timestamp_buffer_.size()) {
-						
-			unsigned int i;
-			//INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
-			for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
-                //! @attention 使用触发时间和曝光时间的一半作为图像的时间戳
-				i += stampAndPublishImage(i);
-			}
-		}
-		buffer_mutex_.unlock();
+            // buffer the image frame and camera info
+            output_rate_mutex_.lock();
+            image_buffer_.push_back(*img_msg_ptr);
+            cinfo_buffer_.push_back(*cam_info_msg_ptr);
+            output_rate_mutex_.unlock();
 
-		// Check whether buffer has stale data and if so, throw away oldest
-		if (image_buffer_.size() > 100) {
-			image_buffer_.erase(image_buffer_.begin(), image_buffer_.begin()+50);
-			cinfo_buffer_.erase(cinfo_buffer_.begin(), cinfo_buffer_.begin()+50);
-			//ROS_ERROR_THROTTLE(1, "%i: Dropping image", cam_id_);
-			INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the image buffer");
-		}
+            buffer_mutex_.lock();
+            //adaptiveSync();
+            if (image_buffer_.size() && timestamp_buffer_.size())
+            {
+                unsigned int i;
+//                if(image_buffer_.size() != timestamp_buffer_.size())
+//                    INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
+                for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
+                    //! @attention 使用触发时间和曝光时间的一半作为图像的时间戳
+                    i += stampAndPublishImage(i);
+                }
+            }
+            buffer_mutex_.unlock();
 
-	// For non sync cases
-	} else {
-        	if (!fillMsgData(*img_msg_ptr)) {
-			       ROS_INFO("Skip one image messge filled.");
-			       continue;
-		      }
+            // Check whether buffer has stale data and if so, throw away oldest
+            if (image_buffer_.size() > 100) {
+                image_buffer_.erase(image_buffer_.begin(), image_buffer_.begin()+50);
+                cinfo_buffer_.erase(cinfo_buffer_.begin(), cinfo_buffer_.begin()+50);
+                //ROS_ERROR_THROTTLE(1, "%i: Dropping image", cam_id_);
+                INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the image buffer");
+            }
 
-        	img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_++;
-        	img_msg_ptr->header.frame_id = cam_info_msg_ptr->header.frame_id;
+//            cout<<(ros::Time::now()-startTime).toSec()<<endl;
+        }
+        else  // For non sync cases
+        {
+            if (!fillMsgData(*img_msg_ptr)) {
+                ROS_INFO("Skip one image messge filled.");
+                continue;
+            }
 
-        	if (!frame_grab_alive_ || !ros::ok()) break;
-		
-        	ros_cam_pub_.publish(img_msg_ptr, cam_info_msg_ptr);
-          // Publish Cropped images
-          if (cam_params_.crop_image) publishCroppedImage(*img_msg_ptr);
-	}
+            img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_++;
+            img_msg_ptr->header.frame_id = cam_info_msg_ptr->header.frame_id;
+
+            if (!frame_grab_alive_ || !ros::ok()) break;
+
+            ros_cam_pub_.publish(img_msg_ptr, cam_info_msg_ptr);
+            // Publish Cropped images
+            if (cam_params_.crop_image) publishCroppedImage(*img_msg_ptr);
+        }
 
 
       }// end if (processNextFrame(eventTimeout) != NULL)
-    } else {
+      else
+      {
+          ROS_WARN("Timeout!!!!");
+      }
+    }
+    else
+    {
         init_ros_time_ = ros::Time(0);
         init_clock_tick_ = 0;
     }
@@ -1271,6 +1312,7 @@ void UEyeCamNodelet::frameGrabLoop() {
 //}
   setStandbyMode();
   frame_grab_alive_ = false;
+  extraggerCameraReady = false;
 
   DEBUG_STREAM("Frame grabber loop terminated for [" << cam_name_ << "]");
 }
@@ -1425,19 +1467,45 @@ void UEyeCamNodelet::setSlaveExposure(const ueye_cam::Exposure &msg)
 // 无人机发过来外部触发开始时间，外部触发使用的硬件上的
 void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
 {
-	if(cam_params_.do_imu_sync) {
-		buffer_mutex_.lock();
-		timestamp_buffer_.push_back(msg);
+//	if(cam_params_.do_imu_sync) {
+//		buffer_mutex_.lock();
+//		timestamp_buffer_.push_back(msg);
 
-		// Check whether buffer has stale stamp and if so throw away oldest
-		if (timestamp_buffer_.size() > 100) {
-			timestamp_buffer_.erase(timestamp_buffer_.begin(), timestamp_buffer_.begin()+50);
-			//ROS_ERROR_THROTTLE(1, "Dropping timestamp");
-			INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the timestamp buffer.");
-		}
-		buffer_mutex_.unlock();
-	}
-};
+//		// Check whether buffer has stale stamp and if so throw away oldest
+//		if (timestamp_buffer_.size() > 100) {
+//			timestamp_buffer_.erase(timestamp_buffer_.begin(), timestamp_buffer_.begin()+50);
+//			//ROS_ERROR_THROTTLE(1, "Dropping timestamp");
+//			INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the timestamp buffer.");
+//		}
+//		buffer_mutex_.unlock();
+//    }
+}
+
+void UEyeCamNodelet::bufferTimestampOdometry(const slam_car::CamOdomStamp &msg)
+{
+    if(cam_params_.do_imu_sync) {
+        //! @attention @attention 使用软件外部触发
+        if(extraggerCameraReady)
+        {
+            //cout<<"getOneExtriggerFrame"<<endl;
+
+//            cout<<1<<endl;
+            if(getOneExtriggerFrame() == IS_SUCCESS)
+                triggerCommand = true;
+//            cout<<2<<endl;
+        }
+        buffer_mutex_.lock();
+        timestamp_buffer_.push_back(msg);
+
+        // Check whether buffer has stale stamp and if so throw away oldest
+        if (timestamp_buffer_.size() > 100) {
+            timestamp_buffer_.erase(timestamp_buffer_.begin(), timestamp_buffer_.begin()+50);
+            //ROS_ERROR_THROTTLE(1, "Dropping timestamp");
+            INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the timestamp buffer.");
+        }
+        buffer_mutex_.unlock();
+    }
+}
 
 //! @attention @attention 能够实现同步的关键函数，IMU和相机的计数进行同步，只有二者计数值相等时才表示二者的时间是同步的!!
 void UEyeCamNodelet::sendTriggerReady()
@@ -1497,8 +1565,9 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 {
     // 检查具有index索引的图像在`timestamp_buffer_`里是否有与之对应的元素
 	int timestamp_index = findInStampBuffer(index);
-	if (timestamp_index+1) {
-
+//    cout<<"timestamp_index: "<<timestamp_index<<endl;
+    if (timestamp_index+1)
+    {
 		//ROS_INFO("found corresponding image from at index: %i", timestamp_index);
 		// Copy corresponding images and time stamps
 		sensor_msgs::Image image;
@@ -1508,16 +1577,23 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 
 		// copy trigger time// + half of the exposure time
         //! @attention @attention 触发时间+曝光时间的一半
+        //adaptive_exposure_ms_ = 15;
 		image.header.stamp = timestamp_buffer_.at(timestamp_index).frame_stamp + ros::Duration(adaptive_exposure_ms_/2000.0);
 		cinfo.header = image.header;
 		
-		//NODELET_INFO_STREAM("trigger time nsec: " << timestamp_buffer_.at(timestamp_index).frame_stamp << " cam time nsec: " << image.header.stamp);
+//        NODELET_INFO_STREAM("trigger time nsec: " << timestamp_buffer_.at(timestamp_index).frame_stamp <<
+//                            " cam time nsec: " << image.header.stamp);
+        if(image_buffer_.size() != timestamp_buffer_.size())
+        {
+            INFO_STREAM("image size: " << image_buffer_.size() << ", stamp size: " << timestamp_buffer_.size()<<
+                        ", error: " << (timestamp_buffer_.at(timestamp_index).frame_stamp-image.header.stamp).toSec());
+        }
 		// Publish image in ROS
 		ros_cam_pub_.publish(image, cinfo);
 
     // compute optimal params for next image frame (in any case)
         //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
-    optimizeCaptureParams(image);
+    //optimizeCaptureParams(image);
 		
 		// Publish Cropped images
 		if (cam_params_.crop_image) publishCroppedImage(image);
@@ -1666,7 +1742,7 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
         //! @attention 设置参数
 		double setpoint = 3.0;//2.4;
 		double deadband = 1.0;
-		double adaptive_exposure_max_ = 8.0; //ms, to make sure not skipping frames, since there is readout time for image from ueye cam manual.
+        double adaptive_exposure_max_ = 20.0; //ms, to make sure not skipping frames, since there is readout time for image from ueye cam manual.
 		double adaptive_exposure_min_ = 0.0; // 0.1
 		double rate_max = 1.2;
 	
@@ -1710,7 +1786,6 @@ void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
 		//ROS_WARN("exposure setpoint = %f", adaptive_exposure_ms_);
 		// Send exposure message for slave
 		sendSlaveExposure();
-
 	}
 
 };
