@@ -125,7 +125,6 @@ UEyeCamNodelet::UEyeCamNodelet():
   sync_buffer_size_ = 100;
   adaptive_exposure_ms_ = 10;
   extraggerCameraReady = false;
-  triggerCommand = false;
 };
 
 
@@ -1108,22 +1107,14 @@ void UEyeCamNodelet::frameGrabLoop() {
 // start capturing 
     //如果在触发模式下调用is_CaptureVideo()函数，相机将进入连续触发待机状态。每收到一个电子触发信号，相机就会捕捉一张图像，并立即准备就绪等待再次触发
     //! @todo 替换成 isCapturing()
-//    if(cam_params_.do_imu_sync && !triggerCommand)
-//        continue;
-    if (isConnected())//isCapturing()
+    if (isConnected())
     {
-        triggerCommand = false;
       INT eventTimeout = (cam_params_.auto_frame_rate || cam_params_.ext_trigger_mode) ?
           (INT) 2000 : (INT) (1000.0 / cam_params_.frame_rate * 1.9); // tide strick timeout to avoid skipping frame. 
-//cout<<3<<endl;
-//ros::Time startTime = ros::Time::now();
       //! @attention 阻塞等待
       // `processNextFrame`函数用于按照eventTimeout等待下一帧图像<到来事件>，如果超时，则抛出错误提示
       if (processNextFrame(eventTimeout) != NULL)
       {
-
-//cout<<4<<(ros::Time::now()-startTime).toSec()<<endl;
-
         // Initialize shared pointers from member messages for nodelet intraprocess publishing
         sensor_msgs::ImagePtr img_msg_ptr(new sensor_msgs::Image(ros_image_));
         sensor_msgs::CameraInfoPtr cam_info_msg_ptr(new sensor_msgs::CameraInfo(ros_cam_info_));
@@ -1141,7 +1132,7 @@ void UEyeCamNodelet::frameGrabLoop() {
           }
         }
 
-        //! @attention @attention 非常重要!! 设置时间戳，注意，这是图像刚刚到来的时候的时间，而不是读取完的时间，后面将进行读取
+        //! @attention 设置时间戳，注意，这是图像刚刚到来的时候的时间，而不是读取完的时间，后面将进行读取
         img_msg_ptr->header.stamp = cam_info_msg_ptr->header.stamp = getImageTickTimestamp();
 
         // Process new frame
@@ -1270,8 +1261,6 @@ void UEyeCamNodelet::frameGrabLoop() {
                 //ROS_ERROR_THROTTLE(1, "%i: Dropping image", cam_id_);
                 INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the image buffer");
             }
-
-//            cout<<(ros::Time::now()-startTime).toSec()<<endl;
         }
         else  // For non sync cases
         {
@@ -1484,18 +1473,16 @@ void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
 void UEyeCamNodelet::bufferTimestampOdometry(const slam_car::CamOdomStamp &msg)
 {
     if(cam_params_.do_imu_sync) {
-        //! @attention @attention 使用软件外部触发
+        //! @attention  使用软件外部触发
         if(extraggerCameraReady)
         {
-            //cout<<"getOneExtriggerFrame"<<endl;
-
-//            cout<<1<<endl;
-            if(getOneExtriggerFrame() == IS_SUCCESS)
-                triggerCommand = true;
-//            cout<<2<<endl;
+            //! @todo try to use IS_DONT_WAIT
+            if(getOneExtriggerFrame() != IS_SUCCESS)
+                WARN_STREAM("getOneExtriggerFrame error, just check it");
         }
         buffer_mutex_.lock();
         timestamp_buffer_.push_back(msg);
+        cout<<(ros::Time::now()-msg.frame_stamp).toSec()<<endl;
 
         // Check whether buffer has stale stamp and if so throw away oldest
         if (timestamp_buffer_.size() > 100) {
@@ -1529,7 +1516,7 @@ void UEyeCamNodelet::sendTriggerReady()
     ros_frame_count_ = 0;  //清空图像计数器
 	int i=0; 
 
-    //! @attention @attention 将缓冲区内的所有未被使用的图像刷掉，因为还没开始触发呢，怎么可能有图像呢
+    //! @attention 将缓冲区内的所有未被使用的图像刷掉，因为还没开始触发呢，怎么可能有图像呢
 	while (processNextFrame(2000) != NULL) {i++;} // this should flush all the unused frame in the camera buffer
 	INFO_STREAM("Flashed " << i << " images from camera buffer prior to start!");
 	
@@ -1585,14 +1572,13 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 //                            " cam time nsec: " << image.header.stamp);
         if(image_buffer_.size() != timestamp_buffer_.size())
         {
-            INFO_STREAM("image size: " << image_buffer_.size() << ", stamp size: " << timestamp_buffer_.size()<<
-                        ", error: " << (timestamp_buffer_.at(timestamp_index).frame_stamp-image.header.stamp).toSec());
+            INFO_STREAM("image size: " << image_buffer_.size() << ", stamp size: " << timestamp_buffer_.size());
         }
 		// Publish image in ROS
 		ros_cam_pub_.publish(image, cinfo);
 
     // compute optimal params for next image frame (in any case)
-        //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
+    //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
     //optimizeCaptureParams(image);
 		
 		// Publish Cropped images
@@ -1698,9 +1684,8 @@ void UEyeCamNodelet::publishCroppedImage(const sensor_msgs::Image& frame)
 void UEyeCamNodelet::optimizeCaptureParams(sensor_msgs::Image image)
 {
     // 如果是主机，则计算自适应曝光时间
-    if(cam_params_.adaptive_exposure_mode_ == 2 && (ros_frame_count_ % 5 == 0) ) { //每5帧进行一次
-  //if(cam_params_.adaptive_exposure_mode_ == 2) {
-
+    if(cam_params_.adaptive_exposure_mode_ == 2 && (ros_frame_count_ % 5 == 0) ) //每5帧进行一次
+    {
     	// Compute the histogram
     	int histSize = 256;
     	float range[] = { 0, 256 } ;

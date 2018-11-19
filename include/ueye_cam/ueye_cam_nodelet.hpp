@@ -291,7 +291,6 @@ protected:
 
   // leather add
   bool extraggerCameraReady;
-  bool triggerCommand;
 };
 
 
