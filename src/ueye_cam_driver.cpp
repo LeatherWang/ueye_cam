@@ -857,11 +857,7 @@ INT UEyeCamDriver::setExtTriggerModeSoftware() {
           cam_name_ << "' (" << err2str(is_err) << ")");
       return is_err;
     }
-//    if ((is_err = is_CaptureVideo(cam_handle_, IS_DONT_WAIT)) != IS_SUCCESS) {
-//      ERROR_STREAM("Could not start external trigger live video mode on UEye camera '" <<
-//          cam_name_ << "' (" << err2str(is_err) << ")");
-//      return is_err;
-//    }
+
     DEBUG_STREAM("Started falling-edge external trigger live video mode on UEye camera '" + cam_name_ + "'");
   }
 
@@ -968,15 +964,15 @@ INT UEyeCamDriver::setStandbyMode() {
 
 const char* UEyeCamDriver::processNextFrame(INT timeout_ms) {
 
-//  if (!freeRunModeActive() && !extTriggerModeActive()) {
-//    ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
-//    return NULL;
-//  }
-    //! @attention leather edit
-    if (!freeRunModeActive() && !extTriggerSoftWareModeActive()) {
-      ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
-      return NULL;
-    }
+  if (!freeRunModeActive() && !extTriggerModeActive()) {
+    ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
+    return NULL;
+  }
+    //! @attention leather edit for soft extrigger
+//    if (!freeRunModeActive() && !extTriggerSoftWareModeActive()) {
+//      ERROR_STREAM("Ueye is not in freerun mode or exttrigger mode");
+//      return NULL;
+//    }
 
   INT is_err = IS_SUCCESS;
 

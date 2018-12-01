@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 2.8.3)
 
 project(ueye_cam)
 
+set( CMAKE_BUILD_TYPE "Release" )
+
 # C++11 Needed
 include(CheckCXXCompilerFlag)
 
@@ -26,7 +28,6 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   image_geometry
   sensor_msgs
-  mavros_msgs
   std_srvs
   std_msgs
   camera_calibration_parsers
@@ -116,6 +117,12 @@ target_link_libraries(ueye_odom_trigger_ready
   ${catkin_LIBRARIES}
 )
 
+add_executable(ueye_imu_trigger_ready
+  src/ueye_imu_trigger_ready.cpp
+)
+target_link_libraries(ueye_imu_trigger_ready
+  ${catkin_LIBRARIES}
+)
 #add_executable(trigger_commander
 #  src/ueye_trigger_ready.cpp
 #)

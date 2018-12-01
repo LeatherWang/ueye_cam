@@ -124,7 +124,6 @@ UEyeCamNodelet::UEyeCamNodelet():
   cam_params_.crop_image = false;
   sync_buffer_size_ = 100;
   adaptive_exposure_ms_ = 10;
-  extraggerCameraReady = false;
 };
 
 
@@ -186,12 +185,16 @@ void UEyeCamNodelet::onInit() {
   ros_exposure_pub_ = nh.advertise<ueye_cam::Exposure>("master_exposure", 1);
 
   // 订阅IMU发过来的外部触发时间戳，用于同步
-  ros_timestamp_sub_ = nh.subscribe("ddd_mav/cam_imu_sync/cam_imu_stamp", 1,
-					  &UEyeCamNodelet::bufferTimestamp, this);
+//  ros_timestamp_sub_ = nh.subscribe("ddd_mav/cam_imu_sync/cam_imu_stamp", 1,
+//					  &UEyeCamNodelet::bufferTimestamp, this);
 
+#ifdef CameraIMUSync
+  ros_timestamp_sub_imu_ = nh.subscribe("/xsens/cam_imu_sync_stamp", 1,
+                      &UEyeCamNodelet::bufferTimestampIMU, this);
+#else
   ros_timestamp_sub_odom_ = nh.subscribe("/slam_car/cam_odom_sync_stamp", 1,
                       &UEyeCamNodelet::bufferTimestampOdometry, this);
-
+#endif
   // 订阅主机发过来的曝光时间
   ros_exposure_sub_ = nh.subscribe("master_exposure", 1,
 					  &UEyeCamNodelet::setSlaveExposure, this);
@@ -996,7 +999,7 @@ void UEyeCamNodelet::frameGrabLoop() {
         //! @attention @attention 强制使能外部触发
 	cam_params_.ext_trigger_mode = 1; // force set ext_trigger_mode
         //! @attention 设置软件外部触发 setExtTriggerModeSoftware()
-        if (setExtTriggerModeSoftware() != IS_SUCCESS) {
+        if (setExtTriggerMode() != IS_SUCCESS) {
         	NODELET_ERROR_STREAM("Shutting down UEye camera interface...");
         	ros::shutdown();
         	return;
@@ -1006,7 +1009,6 @@ void UEyeCamNodelet::frameGrabLoop() {
 
         //! @attention 告诉无人机可以向我发送触发信号了，并将在此之前由于相机缓冲区的图像刷掉
 	sendTriggerReady();
-    extraggerCameraReady = true;
   }
   
   // set camera model for rectification
@@ -1106,8 +1108,8 @@ void UEyeCamNodelet::frameGrabLoop() {
 //_____________________________
 // start capturing 
     //如果在触发模式下调用is_CaptureVideo()函数，相机将进入连续触发待机状态。每收到一个电子触发信号，相机就会捕捉一张图像，并立即准备就绪等待再次触发
-    //! @todo 替换成 isCapturing()
-    if (isConnected())
+    //! @todo 替换成 isConnected()
+    if (isCapturing())
     {
       INT eventTimeout = (cam_params_.auto_frame_rate || cam_params_.ext_trigger_mode) ?
           (INT) 2000 : (INT) (1000.0 / cam_params_.frame_rate * 1.9); // tide strick timeout to avoid skipping frame. 
@@ -1245,8 +1247,8 @@ void UEyeCamNodelet::frameGrabLoop() {
             if (image_buffer_.size() && timestamp_buffer_.size())
             {
                 unsigned int i;
-//                if(image_buffer_.size() != timestamp_buffer_.size())
-//                    INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
+                if(image_buffer_.size() != timestamp_buffer_.size())
+                    INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
                 for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
                     //! @attention 使用触发时间和曝光时间的一半作为图像的时间戳
                     i += stampAndPublishImage(i);
@@ -1301,7 +1303,6 @@ void UEyeCamNodelet::frameGrabLoop() {
 //}
   setStandbyMode();
   frame_grab_alive_ = false;
-  extraggerCameraReady = false;
 
   DEBUG_STREAM("Frame grabber loop terminated for [" << cam_name_ << "]");
 }
@@ -1450,12 +1451,11 @@ void UEyeCamNodelet::setSlaveExposure(const ueye_cam::Exposure &msg)
 			ROS_ERROR("Slave adaptive exposure setting failed");
 		}
 	}
-
 };
 
 // 无人机发过来外部触发开始时间，外部触发使用的硬件上的
-void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
-{
+//void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
+//{
 //	if(cam_params_.do_imu_sync) {
 //		buffer_mutex_.lock();
 //		timestamp_buffer_.push_back(msg);
@@ -1468,18 +1468,29 @@ void UEyeCamNodelet::bufferTimestamp(const mavros_msgs::CamIMUStamp &msg)
 //		}
 //		buffer_mutex_.unlock();
 //    }
-}
+//}
 
+#ifdef CameraIMUSync
+void UEyeCamNodelet::bufferTimestampIMU(const xsens_driver::CamIMUStamp &msg)
+{
+    if(cam_params_.do_imu_sync) {
+        buffer_mutex_.lock();
+        timestamp_buffer_.push_back(msg);
+        //cout<<(ros::Time::now()-msg.frame_stamp).toSec()<<endl;
+
+        // Check whether buffer has stale stamp and if so throw away oldest
+        if (timestamp_buffer_.size() > 100) {
+            timestamp_buffer_.erase(timestamp_buffer_.begin(), timestamp_buffer_.begin()+50);
+            //ROS_ERROR_THROTTLE(1, "Dropping timestamp");
+            INFO_STREAM("[ " << cam_name_ << " ] Dropping half of the timestamp buffer.");
+        }
+        buffer_mutex_.unlock();
+    }
+}
+#else
 void UEyeCamNodelet::bufferTimestampOdometry(const slam_car::CamOdomStamp &msg)
 {
     if(cam_params_.do_imu_sync) {
-        //! @attention  使用软件外部触发
-        if(extraggerCameraReady)
-        {
-            //! @todo try to use IS_DONT_WAIT
-            if(getOneExtriggerFrame() != IS_SUCCESS)
-                WARN_STREAM("getOneExtriggerFrame error, just check it");
-        }
         buffer_mutex_.lock();
         timestamp_buffer_.push_back(msg);
         cout<<(ros::Time::now()-msg.frame_stamp).toSec()<<endl;
@@ -1493,6 +1504,7 @@ void UEyeCamNodelet::bufferTimestampOdometry(const slam_car::CamOdomStamp &msg)
         buffer_mutex_.unlock();
     }
 }
+#endif
 
 //! @attention @attention 能够实现同步的关键函数，IMU和相机的计数进行同步，只有二者计数值相等时才表示二者的时间是同步的!!
 void UEyeCamNodelet::sendTriggerReady()

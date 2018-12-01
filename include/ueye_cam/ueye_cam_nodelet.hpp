@@ -57,7 +57,7 @@
 #include <image_geometry/pinhole_camera_model.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
-#include <mavros_msgs/CamIMUStamp.h>
+//#include <mavros_msgs/CamIMUStamp.h>
 #include <sensor_msgs/SetCameraInfo.h>
 #include <std_msgs/Int16.h>
 #include <std_srvs/Trigger.h>
@@ -76,10 +76,11 @@
 //#include <opencv2/gpu/gpu.hpp>
 
 #include <slam_car/CamOdomStamp.h>
+#include <xsens_driver/CamIMUStamp.h>
 
 namespace ueye_cam {
 
-
+//#define CameraIMUSync
 typedef dynamic_reconfigure::Server<ueye_cam::UEyeCamConfig> ReconfigureServer;
 
 
@@ -160,8 +161,12 @@ protected:
       
   void setSlaveExposure(const ueye_cam::Exposure& msg);
   
-  void bufferTimestamp(const mavros_msgs::CamIMUStamp& msg);
+//  void bufferTimestamp(const mavros_msgs::CamIMUStamp& msg);
+#ifdef CameraIMUSync
+  void bufferTimestampIMU(const xsens_driver::CamIMUStamp& msg);
+#else
   void bufferTimestampOdometry(const slam_car::CamOdomStamp& msg);
+#endif
 
   void sendTriggerReady();
 
@@ -239,8 +244,12 @@ protected:
   image_transport::Publisher ros_cropped_pub_;
   ros::Publisher ros_exposure_pub_;
   
-  ros::Subscriber ros_timestamp_sub_;
+//  ros::Subscriber ros_timestamp_sub_;
+#ifdef CameraIMUSync
+  ros::Subscriber ros_timestamp_sub_imu_;
+#else
   ros::Subscriber ros_timestamp_sub_odom_;
+#endif
   ros::Subscriber ros_exposure_sub_;
   
   sensor_msgs::Image ros_image_;
@@ -259,8 +268,13 @@ protected:
   int sync_buffer_size_;
   std::vector<sensor_msgs::Image> image_buffer_;
   std::vector<sensor_msgs::CameraInfo> cinfo_buffer_;
-  //std::vector<mavros_msgs::CamIMUStamp> timestamp_buffer_;
+//std::vector<mavros_msgs::CamIMUStamp> timestamp_buffer_;
+#ifdef CameraIMUSync
+  std::vector<xsens_driver::CamIMUStamp> timestamp_buffer_;
+#else
   std::vector<slam_car::CamOdomStamp> timestamp_buffer_;
+#endif
+
   boost::mutex buffer_mutex_;
   
   ros::ServiceServer set_cam_info_srv_;
@@ -288,9 +302,6 @@ protected:
   uint64_t prev_output_frame_idx_; // see init_publish_time_
   boost::mutex output_rate_mutex_;
   cv::Mat frame_cropped_;
-
-  // leather add
-  bool extraggerCameraReady;
 };
 
 
