@@ -75,12 +75,18 @@
 //#include <opencv2/cudaarithm.hpp>
 //#include <opencv2/gpu/gpu.hpp>
 
+
+#define CameraIMUSync
+
+#ifndef CameraIMUSync
 #include <slam_car/CamOdomStamp.h>
+#endif
+
 #include <xsens_driver/CamIMUStamp.h>
 
 namespace ueye_cam {
 
-//#define CameraIMUSync
+
 typedef dynamic_reconfigure::Server<ueye_cam::UEyeCamConfig> ReconfigureServer;
 
 

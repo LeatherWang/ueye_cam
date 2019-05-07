@@ -1,5 +1,9 @@
 
 
+#### 2019/5/7
+The linux driver for this project should not be higher than 4.90, the best choice is [4.80](https://en.ids-imaging.com/ueye-software-archive.html)
+
+---
 Thanks to Chang Liu's work, I add software external trigger mode, which can save some external trigger circuit, but ROS1.0 is seriously lacking in real-time, so it is better to use ROS2.0 or hardware external trigger mode.
 
 ---

@@ -160,6 +160,7 @@ void UEyeCamNodelet::onInit() {
   }
   local_nh.param<bool>("crop_image", cam_params_.crop_image, false);
 
+  // 加载内参，用于发布cameraInfo
   loadIntrinsicsFile();
 
   // Setup dynamic reconfigure server
@@ -168,13 +169,12 @@ void UEyeCamNodelet::onInit() {
   f = bind(&UEyeCamNodelet::configCallback, this, _1, _2);
 
   // Setup publishers, subscribers, and services
-  ros_cam_pub_ = it.advertiseCamera(cam_name_ + "/" + cam_topic_, 3);
+  ros_cam_pub_ = it.advertiseCamera(cam_name_ + "/" + cam_topic_, 3); //同时发布image和cameraInfo
   set_cam_info_srv_ = nh.advertiseService(cam_name_ + "/set_camera_info",
       &UEyeCamNodelet::setCamInfo, this);
   timeout_pub_ = nh.advertise<std_msgs::UInt64>(cam_name_ + "/" + timeout_topic_, 1, true);
   std_msgs::UInt64 timeout_msg; timeout_msg.data = 0; timeout_pub_.publish(timeout_msg);
 
-  // For IMU sync
   ros_rect_pub_ = it.advertise(cam_name_ + "/image_rect", 100); // TODO : not hardcode name
   
   if (cam_params_.crop_image) {
@@ -188,6 +188,7 @@ void UEyeCamNodelet::onInit() {
 //  ros_timestamp_sub_ = nh.subscribe("ddd_mav/cam_imu_sync/cam_imu_stamp", 1,
 //					  &UEyeCamNodelet::bufferTimestamp, this);
 
+  // For IMU sync
 #ifdef CameraIMUSync
   ros_timestamp_sub_imu_ = nh.subscribe("/xsens/cam_imu_sync_stamp", 1,
                       &UEyeCamNodelet::bufferTimestampIMU, this);
@@ -203,17 +204,17 @@ void UEyeCamNodelet::onInit() {
   //! @attention 参考: ueye_trigger_ready.cpp
   trigger_ready_srv_ = nh.serviceClient<std_srvs::Trigger>(cam_name_ + "/trigger_ready");
 
-	// Initiate camera and start capture
-	if (connectCam() != IS_SUCCESS) {
-		NODELET_ERROR_STREAM("Failed to initialize UEye camera '" << cam_name_ << "'");
-		return;
-	}
-	if (setStandbyMode() != IS_SUCCESS) {
-		NODELET_ERROR_STREAM("Shutting down UEye camera interface at initialization...");
-		ros::shutdown();
-		return;
-	}
-	NODELET_INFO_STREAM("Camera " << cam_name_ << " Initialised at standby mode");
+  // Initiate camera and start capture
+  if (connectCam() != IS_SUCCESS) {
+      NODELET_ERROR_STREAM("Failed to initialize UEye camera '" << cam_name_ << "'");
+      return;
+  }
+  if (setStandbyMode() != IS_SUCCESS) {
+      NODELET_ERROR_STREAM("Shutting down UEye camera interface at initialization...");
+      ros::shutdown();
+      return;
+  }
+  NODELET_INFO_STREAM("Camera " << cam_name_ << " Initialised at standby mode");
 
     //!@attention 注意这里会调用一次回调函数，会函数内部`cam_params_ = config`会将没有在参数服务器中(由launch文件设置)设置的参数恢复为dynamic_configure中的默认值
   ros_cfg_->setCallback(f); // this will call configCallback, which will configure the camera's parameters
@@ -1007,7 +1008,7 @@ void UEyeCamNodelet::frameGrabLoop() {
 	
         NODELET_INFO_STREAM("Camera " << cam_name_ << " set to external trigger mode");
 
-        //! @attention 告诉无人机可以向我发送触发信号了，并将在此之前由于相机缓冲区的图像刷掉
+    //! @attention 告诉无人机可以向我发送触发信号了，并将在此之前由于相机缓冲区的图像刷掉
 	sendTriggerReady();
   }
   
@@ -1230,7 +1231,8 @@ void UEyeCamNodelet::frameGrabLoop() {
                 output_rate_mutex_.unlock();
             }
 
-            img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_; ros_frame_count_++;
+            img_msg_ptr->header.seq = cam_info_msg_ptr->header.seq = ros_frame_count_;
+            ros_frame_count_++;
             img_msg_ptr->header.frame_id = cam_info_msg_ptr->header.frame_id;
 
             if (!frame_grab_alive_ || !ros::ok()) { break; }
@@ -1250,7 +1252,7 @@ void UEyeCamNodelet::frameGrabLoop() {
                 if(image_buffer_.size() != timestamp_buffer_.size())
                     INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
                 for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
-                    //! @attention 使用触发时间和曝光时间的一半作为图像的时间戳
+                    //! @attention 使用触发时间+曝光时间的一半作为图像的时间戳
                     i += stampAndPublishImage(i);
                 }
             }
@@ -1577,7 +1579,7 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 		// copy trigger time// + half of the exposure time
         //! @attention @attention 触发时间+曝光时间的一半
         //adaptive_exposure_ms_ = 15;
-		image.header.stamp = timestamp_buffer_.at(timestamp_index).frame_stamp + ros::Duration(adaptive_exposure_ms_/2000.0);
+        image.header.stamp = timestamp_buffer_.at(timestamp_index).frame_stamp + ros::Duration(cam_params_.exposure/2000.0);
 		cinfo.header = image.header;
 		
 //        NODELET_INFO_STREAM("trigger time nsec: " << timestamp_buffer_.at(timestamp_index).frame_stamp <<

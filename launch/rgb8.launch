@@ -37,13 +37,13 @@
 
     <param name="auto_gain" type="bool" value="False" />
     <param name="master_gain" type="int" value="100" />
-    <param name="red_gain" type="int" value="4" />
+    <param name="red_gain" type="int" value="5" />
     <param name="green_gain" type="int" value="0" />
-    <param name="blue_gain" type="int" value="14" />
+    <param name="blue_gain" type="int" value="10" />
     <param name="gain_boost" type="bool" value="True" />
 
     <param name="auto_exposure" type="bool" value="False" />
-    <param name="exposure" type="int" value="4" /> <!-- in ms -->
+    <param name="exposure" type="int" value="25" /> <!-- in ms -->
 
     <param name="auto_white_balance" type="bool" value="True" />
     <param name="white_balance_red_offset" type="int" value="0" />

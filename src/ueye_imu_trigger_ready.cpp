@@ -2,7 +2,8 @@
 #include <cstdlib>
 #include <string>
 #include <std_srvs/Trigger.h>
-#include <slam_car/OdomTriggerControl.h>
+//#include <slam_car/OdomTriggerControl.h>
+#include <xsens_driver/IMUTriggerControl.h>
 
 class TriggerReady
 {
@@ -13,7 +14,7 @@ public:
 		cam0_OK_ = false;
 		cam1_OK_ = false;
 		framerate_hz_ = 18.0; // default framerate TODO get this from the ueye node
-        triggerClient_ = n_.serviceClient<slam_car::OdomTriggerControl>("/xsens/trigger_control");
+        triggerClient_ = n_.serviceClient<xsens_driver::IMUTriggerControl>("/xsens/trigger_control");
 		advertiseService();
 	}
 
@@ -96,7 +97,7 @@ private:
 	ros::NodeHandle n_;
 
 	ros::ServiceClient triggerClient_;
-    slam_car::OdomTriggerControl srv_;
+    xsens_driver::IMUTriggerControl srv_;
 
 	ros::ServiceServer serverCam0_;
 	ros::ServiceServer serverCam1_;
@@ -106,47 +107,58 @@ private:
 
 int main(int argc, char **argv)
 {
-	ros::init(argc, argv, "StartTrigger");
+    ros::init(argc, argv, "Xsens_Trigger_Camera_Sync");
 	TriggerReady tr;
 	
     ros::Rate r2(5); // Hz，发送服务的request，所以速率不要太快
     ros::Rate r(100); // Hz，接受服务的request，主要用于查询，速率快点没关系
 
 	// Send start trigger command to Pixhawk to echo the current timestamp
-    // 使能飞控向相机发送触发信号，以获得时间戳
+    //【1】使能飞控向相机发送触发信号，以获得时间戳
+    ROS_INFO_STREAM("Start px4 triggering...");
 	while (tr.enableTrigger() && ros::ok()) {
 		ROS_INFO("TriggerReady: Retrying reaching pixhawk");
 		r2.sleep();
 	}
-	ROS_INFO_STREAM("Started px4 triggering");
+    ROS_INFO_STREAM("Complete px4 triggering");
+    std::cout << std::endl;
 	
 	// wait for camera acknowledge
-    // 等待相机准备好了触发，接着相机Node节点会睡眠一秒钟用于等待飞控停止发送触发信号
+    //【2】等待相机准备好了触发，接着相机Node节点会睡眠一秒钟用于等待飞控停止发送触发信号
 	//while (!(tr.cam0_OK() && tr.cam1_OK()) && ros::ok()) {
+    ROS_INFO_STREAM("Waiting for the camera to enter external trigger mode...");
 	while (!tr.cam0_OK() && ros::ok()) {
 		ros::spinOnce();
 		r.sleep();
     }
 	tr.reset_cam();
+    ROS_INFO_STREAM("Camera is into external trigger mode");
+    std::cout << std::endl;
 
 	// Send stop trigger command to Pixhawk to allow measuring the offset
-    // 停止飞控发送触发信号
+    //【3】相机睡眠1s，用于停止飞控发送触发信号
+    ROS_INFO_STREAM("Camera sleep 1s to wait px4 to stop sendding trigger singal...");
 	while (tr.disableTrigger() && ros::ok()) {
 		ROS_INFO("TriggerReady: Retrying reaching pixhawk");
 		r2.sleep();
 	}
-	ROS_INFO("TriggerReady: Stopped px4 triggering to set the offset");
+    ROS_INFO("Stopped px4 triggering to set the offset");
+    std::cout << std::endl;
 	
 	// wait for camera acknowledge
-    //! @attention 再次等待相机已经准备好了，这时缓冲区已经清理完成
+    //【4】再次等待相机已经准备好了，这时缓冲区已经清理完成
 	//while (!(tr.cam0_OK() && tr.cam1_OK()) && ros::ok()) {
+    ROS_INFO_STREAM("Waiting for camera to flash out image buffer...");
 	while (!tr.cam0_OK() && ros::ok()) {
 		ros::spinOnce();
 		r.sleep();
-	} 
+    }
 	tr.reset_cam();
+    ROS_INFO_STREAM("Camera's Image buffer is empty");
+    std::cout << std::endl;
 	
-	// Send start trigger command to Pixhawk
+    //【5】Send start trigger command to Pixhawk
+    ROS_INFO_STREAM("Everything is ready, now px4 need to restart send trigger singal");
 	while (tr.enableTrigger() && ros::ok()) {
 		ROS_INFO("TriggerReady: Retrying reaching pixhawk");
 		r2.sleep();
