@@ -1,7 +1,20 @@
 
 
-#### 2019/5/7
+
+**Update date 2: 2019/5/7**
+
 The linux driver for this project should not be higher than 4.90, the best choice is [4.80](https://en.ids-imaging.com/ueye-software-archive.html)
+
+---
+**Update date 1: 2018/12/1**
+
+I have removed the software extrigger for the camera, and add the hareware time sync with a xsens IMU or a odometry.
+
+The IMU provides one GPIO to output the sync singal (named `SyncOut`) with the clock 400Hz, so I use it to trigger the camera, for details, you can see:[LeatherWang/ethzasl_xsens_driver](https://github.com/LeatherWang/ethzasl_xsens_driver)
+
+As for the sync with the wheel odometry, I use extra a single chip to resample the odometry data and count, if have received 5 frame data, send one trigger singal to the camera, for the details, you can see: [LeatherWang/slam_car](https://github.com/LeatherWang/slam_car)
+
+
 
 ---
 Thanks to Chang Liu's work, I add software external trigger mode, which can save some external trigger circuit, but ROS1.0 is seriously lacking in real-time, so it is better to use ROS2.0 or hardware external trigger mode.
