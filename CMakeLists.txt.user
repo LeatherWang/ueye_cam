@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE QtCreatorProject>
-<!-- Written by QtCreator 4.5.0, 2019-05-07T17:20:56. -->
+<!-- Written by QtCreator 4.5.0, 2019-06-18T21:36:33. -->
 <qtcreator>
  <data>
   <variable>EnvironmentId</variable>
@@ -402,7 +402,7 @@
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguation.Title">check_ueye_api</value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments"></value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory"></value>
-    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory.default">/tmp/QtCreator-MgBQOC/qtc-cmake-RJflordm/devel/lib/ueye_cam</value>
+    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory.default">/tmp/QtCreator-GWyyDV/qtc-cmake-sxvJlVZy/devel/lib/ueye_cam</value>
     <value type="int" key="PE.EnvironmentAspect.Base">-1</value>
     <valuelist type="QVariantList" key="PE.EnvironmentAspect.Changes"/>
     <value type="QString" key="ProjectExplorer.ProjectConfiguration.DefaultDisplayName">check_ueye_api</value>
@@ -458,7 +458,7 @@
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguation.Title">ueye_imu_trigger_ready</value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.Arguments"></value>
     <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory"></value>
-    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory.default">/tmp/QtCreator-MgBQOC/qtc-cmake-RJflordm/devel/lib/ueye_cam</value>
+    <value type="QString" key="CMakeProjectManager.CMakeRunConfiguration.UserWorkingDirectory.default">/tmp/QtCreator-GWyyDV/qtc-cmake-sxvJlVZy/devel/lib/ueye_cam</value>
     <value type="int" key="PE.EnvironmentAspect.Base">-1</value>
     <valuelist type="QVariantList" key="PE.EnvironmentAspect.Changes"/>
     <value type="QString" key="ProjectExplorer.ProjectConfiguration.DefaultDisplayName">ueye_imu_trigger_ready</value>

@@ -986,7 +986,7 @@ void UEyeCamNodelet::frameGrabLoop() {
   unsigned int grabbedFrameCount = 0;
 #endif
 
-  ros::Rate idleDelay(200);
+  ros::Rate idleDelay(1000);
 
   // For IMU sync case: 
   // Start capturing and set external trigger mode straight away!
@@ -1246,14 +1246,30 @@ void UEyeCamNodelet::frameGrabLoop() {
 
             buffer_mutex_.lock();
             //adaptiveSync();
+
+            int missedTriggerNum = is_CameraStatus(cam_handle_, IS_TRIGGER_MISSED, IS_GET_STATUS);
+            if(missedTriggerNum > 0)
+                cout << "missedTriggerNum: " << missedTriggerNum <<
+                        ", image_buffer_ size: " << image_buffer_.size() <<
+                        ", stamp_buffer_ size: " << timestamp_buffer_.size()<<endl;
+
             if (image_buffer_.size() && timestamp_buffer_.size())
             {
                 unsigned int i;
                 if(image_buffer_.size() != timestamp_buffer_.size())
                     INFO_STREAM("image_buffer_ size: " << image_buffer_.size() << ", stamp_buffer_ size: " << timestamp_buffer_.size());
+
                 for (i = 0; i < image_buffer_.size() && timestamp_buffer_.size() > 0 ;) {
                     //! @attention 使用触发时间+曝光时间的一半作为图像的时间戳
                     i += stampAndPublishImage(i);
+                }
+
+                while(missedTriggerNum>0 && image_buffer_.size() != timestamp_buffer_.size())
+                {
+                    missedTriggerNum--;
+                    timestamp_buffer_.pop_back();
+                    stamp_buffer_offset_++;
+                    cout << "stamp_buffer_offset_: " << stamp_buffer_offset_ << endl;
                 }
             }
             buffer_mutex_.unlock();
@@ -1282,8 +1298,6 @@ void UEyeCamNodelet::frameGrabLoop() {
             // Publish Cropped images
             if (cam_params_.crop_image) publishCroppedImage(*img_msg_ptr);
         }
-
-
       }// end if (processNextFrame(eventTimeout) != NULL)
       else
       {
@@ -1297,7 +1311,7 @@ void UEyeCamNodelet::frameGrabLoop() {
     }
 
     if (!frame_grab_alive_ || !ros::ok()) break;
-    idleDelay.sleep();
+    //idleDelay.sleep();
   }
 
 //} catch (int e) {
@@ -1578,32 +1592,27 @@ unsigned int UEyeCamNodelet::stampAndPublishImage(unsigned int index)
 
 		// copy trigger time// + half of the exposure time
         //! @attention @attention 触发时间+曝光时间的一半
-        //adaptive_exposure_ms_ = 15;
         image.header.stamp = timestamp_buffer_.at(timestamp_index).frame_stamp + ros::Duration(cam_params_.exposure/2000.0);
 		cinfo.header = image.header;
 		
 //        NODELET_INFO_STREAM("trigger time nsec: " << timestamp_buffer_.at(timestamp_index).frame_stamp <<
 //                            " cam time nsec: " << image.header.stamp);
-        if(image_buffer_.size() != timestamp_buffer_.size())
-        {
-            INFO_STREAM("image size: " << image_buffer_.size() << ", stamp size: " << timestamp_buffer_.size());
-        }
 		// Publish image in ROS
 		ros_cam_pub_.publish(image, cinfo);
 
-    // compute optimal params for next image frame (in any case)
-    //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
-    //optimizeCaptureParams(image);
+        // compute optimal params for next image frame (in any case)
+        //! @attention @attention 计算下一帧最有曝光时间，参考:VI-SENSOR论文
+        //optimizeCaptureParams(image);
 		
-		// Publish Cropped images
-		if (cam_params_.crop_image) publishCroppedImage(image);
+        // Publish Cropped images
+        if (cam_params_.crop_image) publishCroppedImage(image);
 
-		//INFO_STREAM("image_buffer size: " << image_buffer_.size() << ", cinfo_buffer size: " << cinfo_buffer_.size() << ", timestamp_buffer size: " << timestamp_buffer_.size());
-		// Erase published images and used timestamp from buffer
-		if (image_buffer_.size()) image_buffer_.erase(image_buffer_.begin() + index);
-		if (cinfo_buffer_.size()) cinfo_buffer_.erase(cinfo_buffer_.begin() + index);
-		if (timestamp_buffer_.size()) timestamp_buffer_.erase(timestamp_buffer_.begin() + timestamp_index);
-		return 0;
+        //INFO_STREAM("image_buffer size: " << image_buffer_.size() << ", cinfo_buffer size: " << cinfo_buffer_.size() << ", timestamp_buffer size: " << timestamp_buffer_.size());
+        // Erase published images and used timestamp from buffer
+        if (image_buffer_.size()) image_buffer_.erase(image_buffer_.begin() + index);
+        if (cinfo_buffer_.size()) cinfo_buffer_.erase(cinfo_buffer_.begin() + index);
+        if (timestamp_buffer_.size()) timestamp_buffer_.erase(timestamp_buffer_.begin() + timestamp_index);
+        return 0;
 
 	} else {
 		return 1;
@@ -1623,7 +1632,7 @@ int UEyeCamNodelet::findInStampBuffer(unsigned int index)
 	// sequence based method
 	while (k < timestamp_buffer_.size() && ros::ok()) {
 		if (image_buffer_.at(index).header.seq == ((uint)timestamp_buffer_.at(k).frame_seq_id - stamp_buffer_offset_)) {
-			//INFO_STREAM("Found match k=" << k << ", index=" << index << "! image seq: " << image_buffer_.at(index).header.seq << ", buffer header seq: " << ((uint)timestamp_buffer_.at(k).frame_seq_id));
+            //INFO_STREAM("Found match k=" << k << ", index=" << index << "! image seq: " << image_buffer_.at(index).header.seq << ", buffer header seq: " << ((uint)timestamp_buffer_.at(k).frame_seq_id));
 			return k;
 
 		} else {
